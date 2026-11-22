@@ -3,6 +3,7 @@ import { Test } from '@nestjs/testing';
 import request from 'supertest';
 import { App } from 'supertest/types';
 import { AppModule } from '../src/app.module';
+import { setupApp } from '../src/setup-app';
 
 describe('Товары /products', () => {
   let app: INestApplication<App>;
@@ -13,6 +14,7 @@ describe('Товары /products', () => {
     }).compile();
 
     app = testingModule.createNestApplication();
+    setupApp(app);
     await app.init();
   });
 
@@ -84,5 +86,54 @@ describe('Товары /products', () => {
     await request(app.getHttpServer()).delete('/products/1').expect(204);
     await request(app.getHttpServer()).get('/products/1').expect(404);
     await request(app.getHttpServer()).delete('/products/1').expect(404);
+  });
+
+  it('POST с неверными данными — 400 и список ошибок', async () => {
+    const response = await request(app.getHttpServer())
+      .post('/products')
+      .send({ name: '', category: 'books', price: -5, inStock: 'да' })
+      .expect(400);
+
+    expect(response.body).toMatchObject({
+      message: expect.arrayContaining([
+        'name should not be empty',
+        'price must be a positive number',
+        'inStock must be a boolean value',
+      ]) as unknown,
+    });
+  });
+
+  it('лишние поля отбрасываются (whitelist)', async () => {
+    const response = await request(app.getHttpServer())
+      .post('/products')
+      .send({ ...book, isAdmin: true })
+      .expect(201);
+
+    expect(response.body).toEqual({ id: 1, ...book });
+  });
+
+  it('PATCH с неверной ценой — 400', async () => {
+    await request(app.getHttpServer()).post('/products').send(book);
+
+    await request(app.getHttpServer())
+      .patch('/products/1')
+      .send({ price: 'дёшево' })
+      .expect(400);
+  });
+
+  it('maxPrice в query должен быть положительным числом', async () => {
+    await request(app.getHttpServer())
+      .get('/products?maxPrice=abc')
+      .expect(400);
+  });
+
+  it('Swagger-документация доступна по /api-json', async () => {
+    const response = await request(app.getHttpServer())
+      .get('/api-json')
+      .expect(200);
+
+    expect(response.body).toMatchObject({
+      info: { title: 'NestJS Project API' },
+    });
   });
 });

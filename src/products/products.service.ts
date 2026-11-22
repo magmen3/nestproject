@@ -26,7 +26,7 @@ export class ProductsService {
     }
 
     if (filter.maxPrice) {
-      const maxPrice = Number(filter.maxPrice);
+      const maxPrice = filter.maxPrice;
       foundProducts = foundProducts.filter(
         (product) => product.price <= maxPrice,
       );
