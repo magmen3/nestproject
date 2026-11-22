@@ -1,9 +1,9 @@
 # nestjs-project
 
 Учебный проект по дисциплине «Разработка веб-приложений Backend'а» (NestJS).
-Каждая контрольная точка — отдельный коммит и тег: `kt1`, `kt2`, …
+Каждая контрольная точка: отдельный коммит и тег: `kt1`, `kt2`, …
 
-## КТ 1 — REST API товаров
+## КТ 1: REST API товаров (в КТ 3 поле `category` заменено на `categoryId`)
 
 | Метод | Путь | Что делает |
 |---|---|---|
@@ -19,20 +19,57 @@
 { "name": "Книга", "category": "books", "price": 500, "inStock": true }
 ```
 
-## КТ 2 — валидация, конфигурация, Swagger
+## КТ 2: валидация, конфигурация, Swagger
 
 - Глобальный `ValidationPipe` (`whitelist`, `transform`): неверные данные → 400 со списком ошибок, лишние поля отбрасываются.
 - DTO проверяются декораторами `class-validator` (`@IsString`, `@IsNotEmpty`, `@IsNumber`, `@IsPositive`, `@IsBoolean`).
-- Настройки — в `.env` через `ConfigModule` (образец — `.env.example`; сам `.env` в git не попадает).
-- Документация Swagger: http://localhost:3000/api (JSON-схема — `/api-json`).
+- Настройки: в `.env` через `ConfigModule` (образец: `.env.example`; сам `.env` в git не попадает).
+- Документация Swagger: http://localhost:3000/api (JSON-схема: `/api-json`).
+
+## КТ 3: PostgreSQL и TypeORM
+
+- PostgreSQL в Docker (`docker-compose.yml`, порт **5434**), подключение через TypeORM, `synchronize: false`.
+- Структура базы: только миграциями (`src/database/migrations`).
+- Связь **категория 1: N товары**: внешний ключ `products.categoryId → categories.id`.
+- `GET /products` построен на QueryBuilder: `leftJoinAndSelect` (категория), фильтры `category`, `maxPrice`,
+  сортировка `sort=price|name`, пагинация `page`, `limit` → ответ `{ items, total, page, limit }`.
+- `GET /categories/with-products`: категории с товарами одним запросом. Разбор N+1 «до/после»: [docs/n-plus-1.md](docs/n-plus-1.md).
+
+| Метод | Путь | Что делает |
+|---|---|---|
+| POST | `/categories` | создать категорию (409, если такая уже есть) |
+| GET | `/categories` | список категорий |
+| GET | `/categories/with-products` | категории вместе с товарами |
+| GET | `/categories/:id` | одна категория |
+
+Тело товара теперь содержит `categoryId` вместо `category`:
+
+```json
+{ "name": "Книга", "price": 500, "inStock": true, "categoryId": 1 }
+```
 
 ## Запуск
 
 ```bash
 npm install
-cp .env.example .env    # и вписать PORT, например 3000
+cp .env.example .env    # вписать значения (пример ниже)
+npm run db:up           # PostgreSQL в Docker
+npm run migration:run   # создать таблицы
 npm run start:dev
 npm run test:e2e
 ```
 
-Порт берётся из `.env` (переменная `PORT`), по умолчанию 3000.
+Пример `.env`:
+
+```
+PORT=3000
+DB_HOST=localhost
+DB_PORT=5434
+DB_USER=shop
+DB_PASSWORD=shop_password
+DB_NAME=shop
+```
+
+Тесты используют отдельную базу `shop_test` (создаётся контейнером при первом запуске).
+
+Новая миграция после изменения сущностей: `npm run migration:generate -- src/database/migrations/ИмяМиграции`.

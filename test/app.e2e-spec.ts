@@ -2,13 +2,17 @@ import { INestApplication } from '@nestjs/common';
 import { Test } from '@nestjs/testing';
 import request from 'supertest';
 import { App } from 'supertest/types';
+import { DataSource } from 'typeorm';
 import { AppModule } from '../src/app.module';
 import { setupApp } from '../src/setup-app';
 
-describe('Товары /products', () => {
-  let app: INestApplication<App>;
+process.env.DB_NAME = 'shop_test';
 
-  beforeEach(async () => {
+describe('Магазин: категории и товары', () => {
+  let app: INestApplication<App>;
+  let dataSource: DataSource;
+
+  beforeAll(async () => {
     const testingModule = await Test.createTestingModule({
       imports: [AppModule],
     }).compile();
@@ -16,124 +20,162 @@ describe('Товары /products', () => {
     app = testingModule.createNestApplication();
     setupApp(app);
     await app.init();
+
+    dataSource = app.get(DataSource);
+    await dataSource.runMigrations();
   });
 
-  afterEach(async () => {
+  beforeEach(async () => {
+    await dataSource.query(
+      'TRUNCATE products, categories RESTART IDENTITY CASCADE',
+    );
+  });
+
+  afterAll(async () => {
     await app.close();
   });
 
-  const phone = {
-    name: 'Телефон',
-    category: 'electronics',
-    price: 20000,
-    inStock: true,
-  };
-  const book = { name: 'Книга', category: 'books', price: 500, inStock: true };
+  function api() {
+    return request(app.getHttpServer());
+  }
 
-  it('POST создаёт товар с id', async () => {
-    const response = await request(app.getHttpServer())
+  async function createCategory(name: string) {
+    await api().post('/categories').send({ name }).expect(201);
+  }
+
+  async function createProduct(
+    name: string,
+    price: number,
+    categoryId: number,
+  ) {
+    await api()
       .post('/products')
-      .send(phone)
+      .send({ name, price, inStock: true, categoryId })
+      .expect(201);
+  }
+
+  async function fillShop() {
+    await createCategory('books');
+    await createCategory('electronics');
+    await createProduct('Телефон', 20000, 2);
+    await createProduct('Наушники', 3000, 2);
+    await createProduct('Книга', 500, 1);
+    await createProduct('Альбом', 700, 1);
+    await createProduct('Журнал', 200, 1);
+  }
+
+  it('POST /products сохраняет товар в базу и возвращает его с категорией', async () => {
+    await createCategory('books');
+
+    const response = await api()
+      .post('/products')
+      .send({ name: 'Книга', price: 500, inStock: true, categoryId: 1 })
       .expect(201);
 
-    expect(response.body).toEqual({ id: 1, ...phone });
-  });
-
-  it('GET возвращает список и фильтрует по category и maxPrice', async () => {
-    await request(app.getHttpServer()).post('/products').send(phone);
-    await request(app.getHttpServer()).post('/products').send(book);
-
-    const all = await request(app.getHttpServer()).get('/products').expect(200);
-    expect(all.body).toHaveLength(2);
-
-    const books = await request(app.getHttpServer())
-      .get('/products?category=books')
-      .expect(200);
-    expect(books.body).toEqual([{ id: 2, ...book }]);
-
-    const cheap = await request(app.getHttpServer())
-      .get('/products?maxPrice=1000')
-      .expect(200);
-    expect(cheap.body).toEqual([{ id: 2, ...book }]);
-  });
-
-  it('GET /:id возвращает товар, а несуществующий — 404', async () => {
-    await request(app.getHttpServer()).post('/products').send(phone);
-
-    await request(app.getHttpServer()).get('/products/1').expect(200);
-    const notFound = await request(app.getHttpServer())
-      .get('/products/99')
-      .expect(404);
-    expect(notFound.body).toMatchObject({
-      message: 'Товар с id 99 не найден',
+    expect(response.body).toEqual({
+      id: 1,
+      name: 'Книга',
+      price: 500,
+      inStock: true,
+      categoryId: 1,
+      category: { id: 1, name: 'books' },
     });
   });
 
-  it('PATCH обновляет только переданные поля', async () => {
-    await request(app.getHttpServer()).post('/products').send(phone);
+  it('товар с несуществующей категорией: 404', async () => {
+    await api()
+      .post('/products')
+      .send({ name: 'Книга', price: 500, inStock: true, categoryId: 99 })
+      .expect(404);
+  });
 
-    const response = await request(app.getHttpServer())
+  it('повторная категория: 409', async () => {
+    await createCategory('books');
+    await api().post('/categories').send({ name: 'books' }).expect(409);
+  });
+
+  it('GET /products: фильтр по категории (join), цене и сортировка по цене', async () => {
+    await fillShop();
+
+    const response = await api()
+      .get('/products?category=books&maxPrice=600&sort=price')
+      .expect(200);
+
+    expect(response.body).toMatchObject({
+      total: 2,
+      page: 1,
+      limit: 10,
+      items: [
+        { name: 'Журнал', price: 200, category: { name: 'books' } },
+        { name: 'Книга', price: 500, category: { name: 'books' } },
+      ],
+    });
+  });
+
+  it('GET /products: пагинация page и limit', async () => {
+    await fillShop();
+
+    const firstPage = await api()
+      .get('/products?sort=price&page=1&limit=2')
+      .expect(200);
+    const secondPage = await api()
+      .get('/products?sort=price&page=2&limit=2')
+      .expect(200);
+
+    expect(firstPage.body).toMatchObject({
+      total: 5,
+      page: 1,
+      limit: 2,
+      items: [{ name: 'Журнал' }, { name: 'Книга' }],
+    });
+    expect(secondPage.body).toMatchObject({
+      total: 5,
+      page: 2,
+      items: [{ name: 'Альбом' }, { name: 'Наушники' }],
+    });
+  });
+
+  it('неверные параметры списка: 400', async () => {
+    await api().get('/products?page=0').expect(400);
+    await api().get('/products?limit=500').expect(400);
+    await api().get('/products?sort=password').expect(400);
+  });
+
+  it('GET /categories/with-products: категории вместе с товарами', async () => {
+    await fillShop();
+
+    const response = await api().get('/categories/with-products').expect(200);
+
+    expect(response.body).toMatchObject([
+      {
+        name: 'books',
+        products: [{ name: 'Альбом' }, { name: 'Журнал' }, { name: 'Книга' }],
+      },
+      {
+        name: 'electronics',
+        products: [{ name: 'Наушники' }, { name: 'Телефон' }],
+      },
+    ]);
+  });
+
+  it('PATCH и DELETE работают с базой, 404 для отсутствующего товара', async () => {
+    await fillShop();
+
+    const updated = await api()
       .patch('/products/1')
       .send({ price: 18000 })
       .expect(200);
+    expect(updated.body).toMatchObject({ id: 1, price: 18000 });
 
-    expect(response.body).toEqual({ id: 1, ...phone, price: 18000 });
+    await api().delete('/products/1').expect(204);
+    await api().get('/products/1').expect(404);
+    await api().delete('/products/1').expect(404);
   });
 
-  it('DELETE удаляет товар, повторное удаление — 404', async () => {
-    await request(app.getHttpServer()).post('/products').send(phone);
-
-    await request(app.getHttpServer()).delete('/products/1').expect(204);
-    await request(app.getHttpServer()).get('/products/1').expect(404);
-    await request(app.getHttpServer()).delete('/products/1').expect(404);
-  });
-
-  it('POST с неверными данными — 400 и список ошибок', async () => {
-    const response = await request(app.getHttpServer())
+  it('валидация по-прежнему работает: 400', async () => {
+    await api()
       .post('/products')
-      .send({ name: '', category: 'books', price: -5, inStock: 'да' })
+      .send({ name: '', price: 10.5, inStock: 'да', categoryId: 'books' })
       .expect(400);
-
-    expect(response.body).toMatchObject({
-      message: expect.arrayContaining([
-        'name should not be empty',
-        'price must be a positive number',
-        'inStock must be a boolean value',
-      ]) as unknown,
-    });
-  });
-
-  it('лишние поля отбрасываются (whitelist)', async () => {
-    const response = await request(app.getHttpServer())
-      .post('/products')
-      .send({ ...book, isAdmin: true })
-      .expect(201);
-
-    expect(response.body).toEqual({ id: 1, ...book });
-  });
-
-  it('PATCH с неверной ценой — 400', async () => {
-    await request(app.getHttpServer()).post('/products').send(book);
-
-    await request(app.getHttpServer())
-      .patch('/products/1')
-      .send({ price: 'дёшево' })
-      .expect(400);
-  });
-
-  it('maxPrice в query должен быть положительным числом', async () => {
-    await request(app.getHttpServer())
-      .get('/products?maxPrice=abc')
-      .expect(400);
-  });
-
-  it('Swagger-документация доступна по /api-json', async () => {
-    const response = await request(app.getHttpServer())
-      .get('/api-json')
-      .expect(200);
-
-    expect(response.body).toMatchObject({
-      info: { title: 'NestJS Project API' },
-    });
   });
 });

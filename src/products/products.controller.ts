@@ -22,7 +22,8 @@ import {
 import { CreateProductDto } from './dto/create-product.dto';
 import { ProductFilterDto } from './dto/product-filter.dto';
 import { UpdateProductDto } from './dto/update-product.dto';
-import { Product } from './product';
+import { ProductPageDto } from './dto/product-page.dto';
+import { Product } from './product.entity';
 import { ProductsService } from './products.service';
 
 @ApiTags('Товары')
@@ -34,13 +35,16 @@ export class ProductsController {
   @ApiOperation({ summary: 'Создать товар' })
   @ApiCreatedResponse({ type: Product })
   @ApiBadRequestResponse({ description: 'Данные не прошли проверку' })
+  @ApiNotFoundResponse({ description: 'Категория не найдена' })
   create(@Body() createProductDto: CreateProductDto) {
     return this.productsService.create(createProductDto);
   }
 
   @Get()
-  @ApiOperation({ summary: 'Список товаров с фильтрами' })
-  @ApiOkResponse({ type: [Product] })
+  @ApiOperation({
+    summary: 'Список товаров: фильтры, сортировка, страницы',
+  })
+  @ApiOkResponse({ type: ProductPageDto })
   findAll(@Query() filter: ProductFilterDto) {
     return this.productsService.findAll(filter);
   }
@@ -70,6 +74,6 @@ export class ProductsController {
   @ApiNoContentResponse({ description: 'Товар удалён' })
   @ApiNotFoundResponse({ description: 'Товар не найден' })
   remove(@Param('id', ParseIntPipe) id: number) {
-    this.productsService.remove(id);
+    return this.productsService.remove(id);
   }
 }

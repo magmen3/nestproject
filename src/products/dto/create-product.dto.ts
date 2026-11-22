@@ -1,8 +1,8 @@
 import { ApiProperty } from '@nestjs/swagger';
 import {
   IsBoolean,
+  IsInt,
   IsNotEmpty,
-  IsNumber,
   IsPositive,
   IsString,
 } from 'class-validator';
@@ -16,17 +16,20 @@ export class CreateProductDto {
   @IsNotEmpty()
   name: string;
 
-  @ApiProperty({ example: 'books', description: 'Категория товара' })
-  @IsString()
-  @IsNotEmpty()
-  category: string;
-
-  @ApiProperty({ example: 990, description: 'Цена в рублях, больше нуля' })
-  @IsNumber()
+  @ApiProperty({
+    example: 990,
+    description: 'Цена в рублях, целое число больше нуля',
+  })
+  @IsInt()
   @IsPositive()
   price: number;
 
   @ApiProperty({ example: true, description: 'Есть ли товар на складе' })
   @IsBoolean()
   inStock: boolean;
+
+  @ApiProperty({ example: 1, description: 'id категории' })
+  @IsInt()
+  @IsPositive()
+  categoryId: number;
 }
