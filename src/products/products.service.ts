@@ -1,6 +1,6 @@
 import { Injectable, NotFoundException } from '@nestjs/common';
 import { InjectRepository } from '@nestjs/typeorm';
-import { Repository } from 'typeorm';
+import { In, Repository } from 'typeorm';
 import { CategoriesService } from '../categories/categories.service';
 import { CreateProductDto } from './dto/create-product.dto';
 import { ProductFilterDto } from './dto/product-filter.dto';
@@ -48,6 +48,15 @@ export class ProductsService {
 
     const [items, total] = await query.getManyAndCount();
     return { items, total, page: filter.page, limit: filter.limit };
+  }
+
+  async findNamesByIds(ids: number[]): Promise<Map<number, string>> {
+    const products = await this.productsRepository.findBy({ id: In(ids) });
+    const namesById = new Map<number, string>();
+    for (const product of products) {
+      namesById.set(product.id, product.name);
+    }
+    return namesById;
   }
 
   async findOne(id: number): Promise<Product> {

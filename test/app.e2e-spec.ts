@@ -1,5 +1,7 @@
 import { INestApplication } from '@nestjs/common';
+import { getConnectionToken } from '@nestjs/mongoose';
 import { Test } from '@nestjs/testing';
+import { Connection } from 'mongoose';
 import request from 'supertest';
 import { App } from 'supertest/types';
 import { DataSource } from 'typeorm';
@@ -7,10 +9,12 @@ import { AppModule } from '../src/app.module';
 import { setupApp } from '../src/setup-app';
 
 process.env.DB_NAME = 'shop_test';
+process.env.MONGODB_URI = 'mongodb://localhost:27017/shop_test';
 
 describe('Магазин: категории и товары', () => {
   let app: INestApplication<App>;
   let dataSource: DataSource;
+  let mongoConnection: Connection;
   let adminToken: string;
 
   beforeAll(async () => {
@@ -23,6 +27,7 @@ describe('Магазин: категории и товары', () => {
     await app.init();
 
     dataSource = app.get(DataSource);
+    mongoConnection = app.get<Connection>(getConnectionToken());
     await dataSource.runMigrations();
   });
 
@@ -30,6 +35,7 @@ describe('Магазин: категории и товары', () => {
     await dataSource.query(
       'TRUNCATE products, categories, users RESTART IDENTITY CASCADE',
     );
+    await mongoConnection.collection('reviews').deleteMany({});
     adminToken = await createAdminAndLogin();
   });
 
@@ -336,6 +342,182 @@ describe('Магазин: категории и товары', () => {
     it('чтение товаров доступно без токена', async () => {
       await api().get('/products').expect(200);
       await api().get('/categories').expect(200);
+    });
+  });
+
+  describe('Отзывы в MongoDB', () => {
+    let ivanToken: string;
+    let petrToken: string;
+
+    beforeEach(async () => {
+      await fillShop();
+      await registerUser('ivan@example.com', 'ivanPassword1');
+      await registerUser('petr@example.com', 'petrPassword1');
+      ivanToken = await login('ivan@example.com', 'ivanPassword1');
+      petrToken = await login('petr@example.com', 'petrPassword1');
+    });
+
+    async function createReview(
+      token: string,
+      productId: number,
+      rating: number,
+    ): Promise<string> {
+      const response = await api()
+        .post('/reviews')
+        .auth(token, { type: 'bearer' })
+        .send({ productId, rating, text: `Оценка ${rating}` })
+        .expect(201);
+      return (response.body as { _id: string })._id;
+    }
+
+    it('create: отзыв сохраняется в MongoDB с автором из токена', async () => {
+      const response = await api()
+        .post('/reviews')
+        .auth(ivanToken, { type: 'bearer' })
+        .send({
+          productId: 3,
+          rating: 5,
+          text: 'Отличная книга',
+          pros: ['понятно'],
+        })
+        .expect(201);
+
+      expect(response.body).toMatchObject({
+        productId: 3,
+        rating: 5,
+        text: 'Отличная книга',
+        pros: ['понятно'],
+        cons: [],
+        authorId: 2,
+        authorEmail: 'ivan@example.com',
+      });
+      expect(response.body).toHaveProperty('_id');
+      expect(response.body).toHaveProperty('createdAt');
+
+      const documentsCount = await mongoConnection
+        .collection('reviews')
+        .countDocuments();
+      expect(documentsCount).toBe(1);
+    });
+
+    it('create: без токена: 401, нет товара: 404, оценка 7: 400', async () => {
+      const review = { productId: 3, rating: 5, text: 'Текст' };
+
+      await api().post('/reviews').send(review).expect(401);
+      await api()
+        .post('/reviews')
+        .auth(ivanToken, { type: 'bearer' })
+        .send({ ...review, productId: 999 })
+        .expect(404);
+      await api()
+        .post('/reviews')
+        .auth(ivanToken, { type: 'bearer' })
+        .send({ ...review, rating: 7 })
+        .expect(400);
+    });
+
+    it('find и findById: список, фильтр по товару, один отзыв, 400 и 404', async () => {
+      const firstId = await createReview(ivanToken, 3, 5);
+      await createReview(petrToken, 1, 4);
+
+      const all = await api().get('/reviews').expect(200);
+      expect(all.body).toHaveLength(2);
+
+      const forBook = await api().get('/reviews?productId=3').expect(200);
+      expect(forBook.body).toMatchObject([{ productId: 3, rating: 5 }]);
+
+      const one = await api().get(`/reviews/${firstId}`).expect(200);
+      expect(one.body).toMatchObject({ _id: firstId, rating: 5 });
+
+      await api().get('/reviews/not-an-id').expect(400);
+      await api().get('/reviews/6735f0c2a1b2c3d4e5f60718').expect(404);
+    });
+
+    it('findByIdAndUpdate: автор меняет свой отзыв, чужой: 403, админ: может', async () => {
+      const reviewId = await createReview(ivanToken, 3, 3);
+
+      const updated = await api()
+        .patch(`/reviews/${reviewId}`)
+        .auth(ivanToken, { type: 'bearer' })
+        .send({ rating: 4, cons: ['дорого'] })
+        .expect(200);
+      expect(updated.body).toMatchObject({ rating: 4, cons: ['дорого'] });
+
+      await api()
+        .patch(`/reviews/${reviewId}`)
+        .auth(petrToken, { type: 'bearer' })
+        .send({ rating: 1 })
+        .expect(403);
+
+      await api()
+        .patch(`/reviews/${reviewId}`)
+        .auth(adminToken, { type: 'bearer' })
+        .send({ text: 'Отредактировано модератором' })
+        .expect(200);
+    });
+
+    it('findByIdAndDelete: автор удаляет отзыв, потом 404', async () => {
+      const reviewId = await createReview(ivanToken, 3, 2);
+
+      await api()
+        .delete(`/reviews/${reviewId}`)
+        .auth(petrToken, { type: 'bearer' })
+        .expect(403);
+      await api()
+        .delete(`/reviews/${reviewId}`)
+        .auth(ivanToken, { type: 'bearer' })
+        .expect(204);
+      await api().get(`/reviews/${reviewId}`).expect(404);
+    });
+
+    it('aggregate: средняя оценка и число отзывов по товарам, по убыванию', async () => {
+      await createReview(ivanToken, 3, 5);
+      await createReview(petrToken, 3, 4);
+      await createReview(ivanToken, 1, 3);
+      await createReview(petrToken, 1, 2);
+      await createReview(ivanToken, 2, 5);
+
+      const response = await api().get('/reviews/stats').expect(200);
+
+      expect(response.body).toEqual([
+        {
+          productId: 2,
+          productName: 'Наушники',
+          averageRating: 5,
+          reviewsCount: 1,
+        },
+        {
+          productId: 3,
+          productName: 'Книга',
+          averageRating: 4.5,
+          reviewsCount: 2,
+        },
+        {
+          productId: 1,
+          productName: 'Телефон',
+          averageRating: 2.5,
+          reviewsCount: 2,
+        },
+      ]);
+    });
+
+    it('aggregate с $match: только оценки не ниже minRating', async () => {
+      await createReview(ivanToken, 3, 5);
+      await createReview(petrToken, 3, 1);
+      await createReview(ivanToken, 1, 2);
+
+      const response = await api()
+        .get('/reviews/stats?minRating=4')
+        .expect(200);
+
+      expect(response.body).toEqual([
+        {
+          productId: 3,
+          productName: 'Книга',
+          averageRating: 5,
+          reviewsCount: 1,
+        },
+      ]);
     });
   });
 });

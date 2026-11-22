@@ -59,12 +59,31 @@
 - Администратор: `npm run admin:create` (берёт `ADMIN_EMAIL` и `ADMIN_PASSWORD` из `.env`).
 - В Swagger: кнопка **Authorize** → вставить токен.
 
+## КТ 5: MongoDB вместе с PostgreSQL
+
+- MongoDB в Docker (`mongo:7`, порт 27017), подключение `MongooseModule.forRootAsync`, адрес: `MONGODB_URI` в `.env`.
+- Отзывы о товарах: Mongoose-схема `Review` (`@Schema`, `@Prop`, `SchemaFactory.createForClass`).
+- CRUD через Model: `find`, `findById`, `create`, `findByIdAndUpdate`, `findByIdAndDelete`.
+- Агрегация `GET /reviews/stats`: `$match` (оценка не ниже `minRating`) → `$group` (средняя оценка и число отзывов по товару) → `$sort`.
+  Названия товаров подтягиваются из PostgreSQL одним запросом.
+- Обе базы работают одновременно: каталог и пользователи: PostgreSQL (TypeORM), отзывы: MongoDB (Mongoose).
+  Почему так: [docs/why-mongodb.md](docs/why-mongodb.md).
+
+| Метод | Путь | Доступ | Что делает |
+|---|---|---|---|
+| POST | `/reviews` | с токеном | оставить отзыв (товар должен существовать) |
+| GET | `/reviews?productId=1` | все | список отзывов |
+| GET | `/reviews/stats?minRating=4` | все | рейтинг товаров (aggregate) |
+| GET | `/reviews/:id` | все | один отзыв |
+| PATCH | `/reviews/:id` | автор или admin | изменить |
+| DELETE | `/reviews/:id` | автор или admin | удалить |
+
 ## Запуск
 
 ```bash
 npm install
 cp .env.example .env    # вписать значения (пример ниже)
-npm run db:up           # PostgreSQL в Docker
+npm run db:up           # PostgreSQL и MongoDB в Docker
 npm run migration:run   # создать таблицы
 npm run admin:create    # создать администратора
 npm run start:dev
@@ -84,8 +103,9 @@ JWT_SECRET=длинная-случайная-строка
 JWT_EXPIRES_IN_SECONDS=3600
 ADMIN_EMAIL=admin@shop.local
 ADMIN_PASSWORD=adminPassword123
+MONGODB_URI=mongodb://localhost:27017/shop
 ```
 
-Тесты используют отдельную базу `shop_test` (создаётся контейнером при первом запуске).
+Тесты используют отдельные базы `shop_test` в PostgreSQL и MongoDB.
 
 Новая миграция после изменения сущностей: `npm run migration:generate -- src/database/migrations/ИмяМиграции`.
