@@ -9,9 +9,13 @@ import {
   Patch,
   Post,
   Query,
+  UseGuards,
 } from '@nestjs/common';
 import {
   ApiBadRequestResponse,
+  ApiBearerAuth,
+  ApiForbiddenResponse,
+  ApiUnauthorizedResponse,
   ApiCreatedResponse,
   ApiNoContentResponse,
   ApiNotFoundResponse,
@@ -19,6 +23,10 @@ import {
   ApiOperation,
   ApiTags,
 } from '@nestjs/swagger';
+import { JwtAuthGuard } from '../auth/guards/jwt-auth.guard';
+import { RolesGuard } from '../auth/guards/roles.guard';
+import { Roles } from '../auth/roles.decorator';
+import { Role } from '../users/role';
 import { CreateProductDto } from './dto/create-product.dto';
 import { ProductFilterDto } from './dto/product-filter.dto';
 import { UpdateProductDto } from './dto/update-product.dto';
@@ -32,6 +40,11 @@ export class ProductsController {
   constructor(private readonly productsService: ProductsService) {}
 
   @Post()
+  @UseGuards(JwtAuthGuard, RolesGuard)
+  @Roles(Role.Admin)
+  @ApiBearerAuth()
+  @ApiUnauthorizedResponse({ description: 'Нет токена' })
+  @ApiForbiddenResponse({ description: 'Нужна роль admin' })
   @ApiOperation({ summary: 'Создать товар' })
   @ApiCreatedResponse({ type: Product })
   @ApiBadRequestResponse({ description: 'Данные не прошли проверку' })
@@ -58,6 +71,11 @@ export class ProductsController {
   }
 
   @Patch(':id')
+  @UseGuards(JwtAuthGuard, RolesGuard)
+  @Roles(Role.Admin)
+  @ApiBearerAuth()
+  @ApiUnauthorizedResponse({ description: 'Нет токена' })
+  @ApiForbiddenResponse({ description: 'Нужна роль admin' })
   @ApiOperation({ summary: 'Изменить товар' })
   @ApiOkResponse({ type: Product })
   @ApiNotFoundResponse({ description: 'Товар не найден' })
@@ -69,6 +87,11 @@ export class ProductsController {
   }
 
   @Delete(':id')
+  @UseGuards(JwtAuthGuard, RolesGuard)
+  @Roles(Role.Admin)
+  @ApiBearerAuth()
+  @ApiUnauthorizedResponse({ description: 'Нет токена' })
+  @ApiForbiddenResponse({ description: 'Нужна роль admin' })
   @HttpCode(204)
   @ApiOperation({ summary: 'Удалить товар' })
   @ApiNoContentResponse({ description: 'Товар удалён' })

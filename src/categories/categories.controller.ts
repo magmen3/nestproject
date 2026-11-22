@@ -5,15 +5,23 @@ import {
   Param,
   ParseIntPipe,
   Post,
+  UseGuards,
 } from '@nestjs/common';
 import {
+  ApiBearerAuth,
   ApiConflictResponse,
+  ApiForbiddenResponse,
+  ApiUnauthorizedResponse,
   ApiCreatedResponse,
   ApiNotFoundResponse,
   ApiOkResponse,
   ApiOperation,
   ApiTags,
 } from '@nestjs/swagger';
+import { JwtAuthGuard } from '../auth/guards/jwt-auth.guard';
+import { RolesGuard } from '../auth/guards/roles.guard';
+import { Roles } from '../auth/roles.decorator';
+import { Role } from '../users/role';
 import { CategoriesService } from './categories.service';
 import { Category } from './category.entity';
 import { CreateCategoryDto } from './dto/create-category.dto';
@@ -24,6 +32,11 @@ export class CategoriesController {
   constructor(private readonly categoriesService: CategoriesService) {}
 
   @Post()
+  @UseGuards(JwtAuthGuard, RolesGuard)
+  @Roles(Role.Admin)
+  @ApiBearerAuth()
+  @ApiUnauthorizedResponse({ description: 'Нет токена' })
+  @ApiForbiddenResponse({ description: 'Нужна роль admin' })
   @ApiOperation({ summary: 'Создать категорию' })
   @ApiCreatedResponse({ type: Category })
   @ApiConflictResponse({ description: 'Такая категория уже есть' })

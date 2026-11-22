@@ -8,6 +8,7 @@ export function setupApp(app: INestApplication) {
     .setTitle('NestJS Project API')
     .setDescription('Учебный API интернет-магазина')
     .setVersion('1.0')
+    .addBearerAuth()
     .build();
   const document = SwaggerModule.createDocument(app, swaggerConfig);
   SwaggerModule.setup('api', app, document);

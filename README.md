@@ -48,6 +48,17 @@
 { "name": "Книга", "price": 500, "inStock": true, "categoryId": 1 }
 ```
 
+## КТ 4: аутентификация JWT
+
+- `POST /auth/register`: регистрация (роль `user`). Пароль хешируется **bcrypt** (в базе строка `$2b$10$...`).
+- `POST /auth/login`: Passport **LocalStrategy** проверяет пароль через `bcrypt.compare` → `{ accessToken }` (JWT). Неверный пароль → 401.
+- `GET /auth/profile`: защищён `JwtAuthGuard`: без токена → 401.
+- Изменение каталога (`POST/PATCH/DELETE /products`, `POST /categories`): только роль `admin`
+  (`JwtAuthGuard` + `RolesGuard` + `@Roles(Role.Admin)`): без токена → 401, роль `user` → 403. Чтение: без токена.
+- Пароль и его хеш не попадают ни в ответы, ни в JWT-payload (`{ sub, email, role }`), ни в `req.user`.
+- Администратор: `npm run admin:create` (берёт `ADMIN_EMAIL` и `ADMIN_PASSWORD` из `.env`).
+- В Swagger: кнопка **Authorize** → вставить токен.
+
 ## Запуск
 
 ```bash
@@ -55,6 +66,7 @@ npm install
 cp .env.example .env    # вписать значения (пример ниже)
 npm run db:up           # PostgreSQL в Docker
 npm run migration:run   # создать таблицы
+npm run admin:create    # создать администратора
 npm run start:dev
 npm run test:e2e
 ```
@@ -68,6 +80,10 @@ DB_PORT=5434
 DB_USER=shop
 DB_PASSWORD=shop_password
 DB_NAME=shop
+JWT_SECRET=длинная-случайная-строка
+JWT_EXPIRES_IN_SECONDS=3600
+ADMIN_EMAIL=admin@shop.local
+ADMIN_PASSWORD=adminPassword123
 ```
 
 Тесты используют отдельную базу `shop_test` (создаётся контейнером при первом запуске).
